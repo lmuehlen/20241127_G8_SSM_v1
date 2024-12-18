@@ -16,7 +16,11 @@ library(restatis)
 library(devtools)
 library(httr2)
 library(readxl)
-library(RJDemetra) #for seasonal adjustment
+library(RJDemetra)
+library(reactablefmtr)
+library(viridis)
+library(dataui)
+#for seasonal adjustment
 #usethis::use_github()
 #restatis:::gen_api()
 #restatis::gen_table("61111-0001","genesis")
@@ -68,10 +72,11 @@ data%>%select(date,sector,nace2,shortage_material)
 }
 ```
 
-##get_sts_producer_prices
+## Eurostat
+###get_p_eurostat
 ```{r}
 
-get_sts_prices<-function(){
+get_p_eurostat<-function(){
 query1 <- CreateSearchQuery()
 setSearchText(query1, "sts_inpp_m,nsa,i21,de")
 entities1<-c(query1)%>%SearchEntities()%>%getEntities()
@@ -125,9 +130,9 @@ data%>%select(countrycode,date,level,sector,nace2=subsector,subsector_name,produ
 
 data_prices<-get_sts_prices()
 ```
-
+### get_q_eurostat
 ```{r}
-get_sts_production<-function(){
+get_q_eurostat<-function(){
 query1 <- CreateSearchQuery()
 setSearchText(query1, "sts_inpr_m,nsa,i21,de")
 entities1<-c(query1)%>%SearchEntities()%>%getEntities()
@@ -182,8 +187,9 @@ data%>%select(date,sector,nace2=subsector,production_volume)
 data_volume<-get_sts_production()
 ```
 
+### get_p.imp_eurostat
 ```{r}
-get_sts_importprices<-function(){
+get_p.imp_eurostat<-function(){
 query <- CreateSearchQuery()
 setSearchText(query, "sts_inpi_m;prc_imp,nsa,i21,de")
 entities<-c(query)%>%SearchEntities()%>%getEntities()
@@ -247,7 +253,7 @@ search_results$Cubes
 
 ## Producer prices industry
 ```{r}
-get_producerprices_destatis<-function(){
+get_p.indu_destatis<-function(){
 data_2d<-gen_cube("61241BM002", database = "genesis")%>%  
   mutate(nace2=sub("GP19-(.*)","\\1",GP19M2),
          ym=paste0(as.character(JAHR),sub("MONAT(.*)","\\1",MONAT)),
@@ -279,7 +285,7 @@ rbind(data_2d,data_3d,data_4d)%>%
 ## Production industry
 ```{r}
 # Note: WZ08 gleichbedeutend mit NACE2
-get_production_industry_destatis<-function(){
+get_q.indu_industry_destatis<-function(){
 data_2d<-gen_cube("42153BM002", database = "genesis")%>%
   filter(WERT03=="WERTORG")%>%
   mutate(nace2=sub("WZ08-(.*)","\\1",WZ08V2),
@@ -312,7 +318,7 @@ rbind(data_2d,data_3d,data_4d)%>%
 ## Producer prices Service
 
 ```{r}
-get_producerprices_service_destatis<-function(){
+get_p.serv_destatis<-function(){
 data<-gen_cube("61311BV002", database = "genesis")%>%
 #  filter(WZ08D6!="WZ08-501-01")%>% #getting rid of one composed thing
   mutate(nace2=sub("WZ08-(.*)","\\1",WZ08D6),
@@ -332,7 +338,7 @@ data%>%
 
 ```{r}
 
-get_production_service_destatis<-function(){
+get_q.serv_destatis<-function(){
 data<-gen_cube("47414BM004", database = "genesis")%>%
   filter(WERT01=="WERTORG")%>%
 #  filter(WZ08D6!="WZ08-501-01")%>% #getting rid of one composed thing
@@ -351,7 +357,7 @@ data%>%
 
 ## import prices
 ```{r}
-get_importprices<-function(){
+get_pimp_destatis<-function(){
 data_2d<-gen_cube("61411BM002", database = "genesis")%>%  
   mutate(nace2=sub("GP19-(.*)","\\1",GP19X2),
          level=2,
@@ -377,7 +383,7 @@ rbind(data_2d,data_4d)%>%
 ## Import Volume
 51000-0008
 ```{r}
-get_importvolume_destatis<-function(){
+get_q.impfull_destatis<-function(){
   
 data_import_2d<-map_df(2008:2024,function(x){
 gen_cube("51000BM221", database = "genesis",startyear=x,endyear=x,contents="GEWE")%>%  
@@ -421,7 +427,7 @@ data_import2<-left_join(data_import,countrycodes,by="countrycode")
 return(data_import2)
 }
 
-gen_importvolume_agg<-function(data){
+gen_q.imp_agg<-function(data){
   
 data%>%
   select(nace2,date,country_group,importvolume)%>%
@@ -486,7 +492,8 @@ do_seasonadj<-function(x,date){
         # Extract the non-NA segment
         vals_sub <- vals[non_na_idx]
         dates_sub <- dates[non_na_idx]
-        
+    
+    # differ between monthly and quarterly series    
      if(mean(diff(non_na_idx))-1<1e-6){
         ts_data <- ts(vals_sub, start = c(year(dates_sub[1]), month(dates_sub[1])), frequency = 12)
      }else if(mean(diff(non_na_idx))-3<1e-6){
@@ -554,23 +561,36 @@ gen_transformations<-function(data){
   group_by(nace2)%>%
   arrange(date)%>%
   mutate(
-    across(c(production,producerprices,importprices,importEU,importROW,importTOT),~do_seasonadj(.x,date),.names = "{.col}_sa"),
-    across(c(production,producerprices,importprices,importEU,importROW,importTOT),~round(100*(./lag(.,12)-1),1),.names = "{.col}_c12m"),
-    across(c(production,producerprices,importprices,importEU,importROW,importTOT),~round(100*(./lag(.,1)-1),1),.names = "{.col}_c1m"),
+    across(c(production,producerprices,importprices,importEU,importROW,importTOT),~do_seasonadj(.x,date),.names = "{.col}_sa"))%>%
+  rename(production_nsa=production,producerprices_nsa=producerprices,importprices_nsa=importprices,importEU_nsa=importEU,importROW_nsa=importROW,importTOT_nsa=importTOT)%>%
+  mutate(
+    across(c(production_nsa,producerprices_nsa,importprices_nsa,importEU_nsa,importROW_nsa,importTOT_nsa),~round(100*(./lag(.,12)-1),1),.names = "{.col}_c12m"),
+    across(c(production_nsa,producerprices_nsa,importprices_nsa,importEU_nsa,importROW_nsa,importTOT_nsa),~round(100*(./lag(.,1)-1),1),.names = "{.col}_c1m"),
     across(c(production_sa,producerprices_sa,importprices_sa,importEU_sa,importROW_sa,importTOT_sa),~round(100*(./lag(.,1)-1),1),.names = "{.col}_c1m"),
     across(c(production_sa,producerprices_sa,importprices_sa,importEU_sa,importROW_sa,importTOT_sa),~round(100*((.+lag(.,1)+lag(.,2))/(lag(.,12)+lag(.,12+1)+lag(.,12+2))-1),1),.names = "{.col}_c12mr3"))%>%
-  rename(production_nsa=production,producerprices_nsa=producerprices,importprices_nsa=importprices,importEU_nsa=importEU,importROW_nsa=importROW)%>%
   ungroup()%>%
-    pivot_longer(-c(nace2,date,cagegory,nace2_main_code,nace2_main_name,level,nace2_sub_name),names_pattern = "(.*)_(.*)",names_to = c("vars","transf"),values_to = "values")%>%
+    rename(production_nsa_level=production_nsa,
+           producerprices_nsa_level=producerprices_nsa,
+           importprices_nsa_level=importprices_nsa,
+           importEU_nsa_level=importEU_nsa,
+           importROW_nsa_level=importROW_nsa,
+           importTOT_nsa_level=importTOT_nsa,
+           production_sa_level=production_sa,
+           producerprices_sa_level=producerprices_sa,
+           importprices_sa_level=importprices_sa,
+           importEU_sa_level=importEU_sa,
+           importROW_sa_level=importROW_sa,
+           importTOT_sa_level=importTOT_sa)%>%
+    pivot_longer(-c(nace2,date,category,nace2_main_code,nace2_main_name,level,nace2_sub_name),names_pattern = "(.*)_(.*)_(.*)",names_to = c("vars","adj","transf"),values_to = "values")%>%
     pivot_wider(names_from = "vars",values_from = "values")
 
 }
 ```
 
 
+
 #Joining 
 ```{r}
-
 matching_base<-readxl::read_excel("Data/list_nace_sectors.xlsx")%>%
   filter(include)%>%
   select(-c(Weber_name,Weber_weight,CPI_weight,PPI_weight,Comments,include))
@@ -584,9 +604,100 @@ qimp_full<-get_importvolume_destatis()
 qimp<-gen_importvolume_agg(qimp_full)
 
 data<-get_matching(matching_base,p.indu,q.indu,p.serv,q.serv,pimp,qimp)
-data_transf<-gen_transformations(data)
+data_transf<-data%>%gen_transformations()
+```
+
+```{r}
+
+data_table<-data_transf%>%
+  filter(adj=="sa",transf=="level",level==2,date>="2015-01-01",date<="2024-10-01",category=="Industry")%>%
+  group_by(nace2,nace2_sub_name) %>%
+  arrange(date) %>%
+  summarize(
+    last_production = round(last(production[!is.na(production)]),1),
+    production_series = list(production),
+    
+    
+    last_producerprices = round(last(producerprices[!is.na(producerprices)]),1),
+    producerprices_series = list(producerprices),
+    
+    
+    last_importprices = round(last(importprices[!is.na(importprices)]),1),
+    importprices_series = list(importprices),
+    
+    importTOT_series = list(importTOT),
+    last_importTOT = round(last(importTOT[!is.na(importTOT)]),1)
+    
+  )%>%
+  filter(!is.na(last_production))
+
+table<-reactable(
+  data_table,
+  columns = list(
+    # NACE2 as a standard column
+    nace2 = colDef(name = "NACE2",sticky = "left"),
+    nace2_sub_name = colDef(name = "Name"),
+    
+    # For each variable, we'll have one column for the last value and one column for the sparkline
+    last_production = colDef(name = "Last Production"),
+    production_series = colDef(
+      name = "Production Trend",
+      cell = react_sparkline(
+          data = data_table,
+          height = 30,
+          line_color = "#008cba",
+          show_area = TRUE,
+          
+        )
+    ),
+    
+    last_producerprices = colDef(name = "Last Producer Prices"),
+    producerprices_series = colDef(
+      name = "Producer Prices Trend",
+      cell = react_sparkline(
+          data = data_table,
+          height = 30,
+          line_color = "#008cba",
+          show_area = TRUE,
+        )
+    ),
+    
+    last_importprices = colDef(name = "Last Import Prices"),
+    importprices_series = colDef(
+      name = "Import Prices Trend",
+      cell = react_sparkline(
+          data = data_table,
+          height = 30,
+          line_color = "#008cba",
+          show_area = TRUE,
+        )
+    ),
+    
+   importTOT_series = colDef(
+      name = "Import TOT Trend",
+      cell = react_sparkline(
+          data = data_table,
+          height = 30,
+          line_color = "#008cba",
+          show_area = TRUE,
+          margin = margin(2,2,2,2)
+        )
+   ), 
+   last_importTOT = colDef(name = "Last Import TOT")
+    ),
+  bordered = FALSE,
+  highlight = FALSE,
+  striped = FALSE,
+  resizable = FALSE,
+  pagination=FALSE,
+  filterable=TRUE
+)
+
+htmlwidgets::saveWidget(widget = table, file="test_table2.html",selfcontained = FALSE)
+```
 
 
+```{r}
 test_2%>%
   filter(level==2)%>%
   ggplot(aes(date))+
@@ -628,6 +739,59 @@ pagination=F
 
 # Testing
 ## Table
+
+```{r}
+data_test <- MASS::Cars93[1:30, c('Type','Make','Model','MPG.city','MPG.highway')]
+
+averages <- data_test %>%
+  group_by(Type) %>%
+  summarize(
+    MPG.city = mean(MPG.city),
+    MPG.highway = mean(MPG.highway)
+  )
+
+reactable(
+  averages,
+  theme = clean(centered = TRUE),
+  columns = list(
+    Type = colDef(maxWidth = 250),
+    MPG.city = colDef(
+      maxWidth = 200, 
+      style = color_scales(
+        data = data, 
+        colors = viridis::mako(5)), 
+      format = colFormat(digits = 1)),
+    MPG.highway = colDef(
+      maxWidth = 200, 
+      cell = data_bars(
+        data = data, 
+        fill_color = viridis::mako(5), 
+        number_fmt = scales::comma))
+    ),
+  onClick = "expand",
+  details = function(index) {
+    data_sub <- data[data$Type == averages$Type[index], ]
+    reactable(
+      data_sub,
+      theme = clean(centered = TRUE),
+      columns = list(
+        Type = colDef(show = FALSE),
+        Make = colDef(maxWidth = 175),
+        Model = colDef(maxWidth = 120),
+        MPG.city = colDef(
+          maxWidth = 200, 
+          style = color_scales(data, viridis::mako(5)), 
+          format = colFormat(digits = 1)),
+        MPG.highway = colDef(
+          maxWidth = 200, 
+          cell = data_bars(data, fill_color = viridis::mako(5), number_fmt = scales::comma))
+        )
+    ) 
+  }
+)
+```
+
+
 
 ```{r}
 # Basic usage
