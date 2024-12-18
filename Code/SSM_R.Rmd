@@ -17,13 +17,13 @@ library(devtools)
 library(httr2)
 library(readxl)
 library(RJDemetra) #for seasonal adjustment
-
+usethis::use_github()
 #restatis:::gen_api()
 #restatis::gen_table("61111-0001","genesis")
 #install.packages("httr2")
 #gen_auth_save("genesis")
 #usethis::edit_r_environ()
-install.packages("RJDemetra")
+
 ```
 
 
