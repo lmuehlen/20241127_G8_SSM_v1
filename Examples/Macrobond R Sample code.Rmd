@@ -1,0 +1,277 @@
+---
+title: "R MacrobondAPI"
+
+---
+
+# Setting Up  MacrobondAPI
+
+
+```{r Installation, include=FALSE}
+#Clear the environment
+rm(list=ls())
+
+#Turn the scientific notation off
+options(scipen=999)
+
+#Install MBapi Package 
+install.packages("MacrobondAPI", type="win.binary",repos="https://download.macrobond.com/installation/R")
+```
+
+
+```{r Libraries, include=FALSE}
+#Call the necessary packages
+library(MacrobondAPI)
+```
+
+#Quick Data Interrogation 
+
+```{r}
+
+a<-FetchOneEntity("ted_az_ahw")
+
+```
+
+# Single Time Series Fetching
+
+
+```{r Fetching Single Time Series, include=FALSE}
+
+#Use a string with a series' name to fetch the desired time series
+cpi <- FetchOneTimeSeries("uspric2156")
+#Show the MB Object
+show(cpi)
+
+#Convert to an xts object using a as.xts
+cpi_xts<- as.xts(cpi)
+
+plot(cpi)
+
+```
+
+# Single time series with revisions 
+
+```{r Fetching Single Time Series With Revisions, include=FALSE}
+
+seriesWithRevisions <- FetchOneTimeSeriesWithRevisions("uslama1060") 
+
+series2018 <- getVintage(seriesWithRevisions, as.POSIXct("2017-01-01 18:00:00",
+                                                         tz = "Europe/London")) 
+
+plot(series2018)
+
+```
+
+
+```{r Getting different releases, include=FALSE}
+
+seriesGdp <- FetchOneTimeSeriesWithRevisions("usnaac0169") 
+
+firstRelease <- getNthRelease(seriesGdp, 0) 
+secondRelease <- getNthRelease(seriesGdp, 1) 
+
+series.xts <- MakeXtsFromUnifiedResponse(c(firstRelease, secondRelease)) 
+
+plot(series.xts)
+
+```
+
+# Multiple Time Series Fetching
+
+
+
+```{r Fetching Multiple Time Series, include=FALSE}
+
+g10<- c("eur","gbp", "jpy", "cad", "chf", "aud", "nzd", "nok", "sek", "dkk")
+
+g10_series <- FetchTimeSeries(g10)
+list2env(g10_series,.GlobalEnv)
+plot(g10_series$gbp)
+```
+
+
+# Meta Data
+
+
+```{r Meta Data}
+#Fetch the desired time series
+seriesGdp <- FetchOneTimeSeries("uslama1060")
+#Use the MB to obtain the metadata
+meta<-getMetadata(seriesGdp)
+show(meta)
+```
+
+# Unified Time Series Request - Default
+
+```{r Unified Series Request Default, include=FALSE}
+
+
+#State the creation of a unified time series request
+a <- CreateUnifiedTimeSeriesRequest()
+  #Add the desired time series using MB tickers
+  addSeries(a, "usgdp")
+  addSeries(a, "uscpi")
+  #Fetch time series
+  a.result <- FetchTimeSeries(a)
+#Convert the unified time series into a single xts object
+a.xts<- MakeXtsFromUnifiedResponse(a.result)
+
+#The same process without any modifications
+b.result<- FetchUnifiedTimeSeriesDefault(c("usgdp","uscpi"))
+b.xts<-MakeXtsFromUnifiedResponse(b.result)
+
+#a.xts == b.xts
+
+```
+
+```{r Unified Series Request with Custom Currency and Start Date}
+
+#State the creation of a unified time series request
+basic_query <- CreateUnifiedTimeSeriesRequest()
+  #Add the desired time series using MB tickers
+  addSeries(basic_query, "usgdp")
+  addSeries(basic_query, "frgdp")
+  addSeries(basic_query, "cngdp")
+  #Set the desired currency
+  setCurrency(basic_query, "SEK")
+  #Set the desired start date
+  setStartDate(basic_query, "2000-01-01")
+  #Fetch time series 
+  basic_query.result <- FetchTimeSeries(basic_query)
+  #Convert the unified time series into a single xts object
+  basic_query.xts<- MakeXtsFromUnifiedResponse(basic_query.result)
+#basic_query.xts
+
+```
+
+# Downloading data with different frequencies
+
+
+```{r Unified Series Request to a lower frequency}
+
+seriesRequest <- CreateUnifiedTimeSeriesRequest()
+  #Set the desired frequency
+	setFrequency(seriesRequest, "Quarterly")
+	#Add the first query
+	addSeries(seriesRequest, "usgdp")
+	#Create a variable with already set Frequency
+	seriesExpressionCpi <- addSeries(seriesRequest, "uscpi")
+	#Add the second  query
+	setMissingValueMethod(seriesExpressionCpi, "None")
+	#Choose Higher Frequency Conversion Method
+  setToLowerFrequencyMethod(seriesExpressionCpi, "First")
+	#Choose what to do with the missing values
+	twoSeries <- FetchTimeSeries(seriesRequest)
+	#Fetch the series from MB Database
+	series.xts <- MakeXtsFromUnifiedResponse(twoSeries)
+	
+
+```
+
+
+```{r Unified Series Request to a higher frequency}
+
+seriesQuery <- CreateUnifiedTimeSeriesRequest()
+  #Set The desired frequency
+  setFrequency(seriesQuery, "Monthly")
+  #Add the first query
+  seriesAll <- addSeries(seriesQuery, "usgdp")
+  #Add the second  query
+  seriesAll <- addSeries(seriesQuery, "uscpi")
+  #Choose Higher Frequency Conversion Method
+  setToHigherFrequencyMethod(seriesAll, "LinearInterpolation")
+  #Fetch The Time Series desired 
+  BothSeries <- FetchTimeSeries(seriesQuery)
+  #Convert the resulting list into an xts
+  BethSeries.xts <- MakeXtsFromUnifiedResponse(BothSeries)
+  
+```
+
+
+# Searching for Macrobond's time series from R
+
+```{r Getting the region key}
+
+#Fetch a MB object
+concept_search <- FetchOneTimeSeries("usgdp")
+#Obtain the concept
+concept<- getConcepts(concept_search)
+#Get the concept and its description
+concept
+show(GetConceptDescription(concept))
+
+```
+
+```{r Search by concept}
+
+#Search for given concept within the declared regions
+gdp_names <- SearchByConcept(c("cz", "hu", "si", "pl"), "gdp_total")
+
+#Fetch the requested series i.e. given concept within regions you selected 
+gdp_results <- FetchUnifiedTimeSeriesDefault(gdp_names)
+
+#Convert the result into an xts
+gdp_results.xts <- MakeXtsFromUnifiedResponse(gdp_results)
+gdp_results.xts
+```
+
+```{r Search by region}
+
+ted_argentina_annual_work_hours<-FetchOneTimeSeries("ted_ar_ahw")
+
+#Create a Search Query
+query <- CreateSearchQuery()
+#Declare the type of desired entities
+setEntityTypeFilter(query, "TimeSeries")
+#Declare the Attribute with which 
+addAttributeValueFilter(query, "RegionKey", getConcepts(ted_argentina_annual_work_hours)) 
+country_set <- getEntities(SearchEntities(query))
+
+#create empty vector
+ted_work_hours<-NULL
+
+#get list of series' codes
+for (i in country_set){
+  ted_work_hours<-append(ted_work_hours, getName(i))
+}
+  
+ted_work_hours
+```
+
+# Uploading your data into your MB account
+
+```{r}
+
+
+my_time_series <- CreateTimeSeriesObject("ih:mb:priv:s1",
+                                    "Chinese GDP in Sek",
+                                    "cn",
+                                    "Training",
+                                    "Monthly",
+                                    as.Date("2000-01-01"),
+                                    c(1,2,3,4,5,6,7,8,9))
+
+
+UploadOneOrMoreTimeSeries(my_time_series)
+
+###########
+
+#Codes for creation of the in-house time series 
+
+#ih:mb:priv:          Private Time Series
+#ih:mb:dept:	        Department-Wide Time Series
+#ih:mb:com:           Company-Wide Time Series
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

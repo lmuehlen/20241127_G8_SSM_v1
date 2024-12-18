@@ -1,0 +1,860 @@
+---
+title: "SSM_R"
+author: "lmuehlen"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Packages
+ 
+```{r}
+library(MacrobondAPI)
+library(reactable)
+library(echarts4r)
+library(tidyverse)
+library(restatis)
+library(devtools)
+library(httr2)
+library(readxl)
+library(RJDemetra) #for seasonal adjustment
+
+#restatis:::gen_api()
+#restatis::gen_table("61111-0001","genesis")
+#install.packages("httr2")
+#gen_auth_save("genesis")
+#usethis::edit_r_environ()
+install.packages("RJDemetra")
+```
+
+
+# Functions
+
+## Ifo
+
+## get_ifo_manufacturing
+```{r}
+get_ifo_manufacturing<-function(){
+  query <- CreateSearchQuery()
+setSearchText(query, "ifo manufacturing by sector shortage of material & maj &bdu")
+
+entities<-query%>%SearchEntities()%>%getEntities()
+release_tickers<-map_chr(entities,getName)
+
+y<-release_tickers%>%FetchTimeSeries()
+df<-y%>%map(as.xts)%>%do.call("cbind",.)%>%fortify.zoo(name="date")%>%as_tibble()%>%
+  pivot_longer(-date,names_to = "sectorcode",values_to = "shortage_material")
+
+
+m<-map(y,function(x)
+  {cbind(title=getTitle(x),
+      sectorcode=getMetadataValues(getMetadata(x),"PrimName"),
+      countrycode=getMetadataValues(getMetadata(x),"Region"))
+})
+
+m<-do.call("rbind",m)%>%as_tibble()
+
+data<-left_join(df,m,by="sectorcode")%>%
+  filter(grepl("deifo_c(\\d{7})_maj_bdu",sectorcode),
+         grepl("deifo_c(\\d{4})000_maj_bdu",sectorcode))%>%
+  mutate(
+    sector="c",#sector=sub("deifo_(.).*", "\\1", sectorcode),
+    nace2=sub(".*deifo_.(\\d{4}).*", "\\1", sectorcode),
+    level=case_when(grepl("00$",nace2)~2,
+                    grepl("0$",nace2)~3,
+                    TRUE~4),
+    nace2=gsub("0{1,2}$", "", nace2),
+    subsector_name=sub("Germany, Business Surveys, Ifo, Business Survey, Manufacturing by Sectors, (.*), Shortage of Material, Yes-Answers","\\1", title))
+
+data%>%select(date,sector,nace2,shortage_material)
+}
+```
+
+##get_sts_producer_prices
+```{r}
+
+get_sts_prices<-function(){
+query1 <- CreateSearchQuery()
+setSearchText(query1, "sts_inpp_m,nsa,i21,de")
+entities1<-c(query1)%>%SearchEntities()%>%getEntities()
+release_tickers1<-c(map_chr(entities1,getName))
+
+query2 <- CreateSearchQuery()
+setSearchText(query2, "sts_sepp_q,nsa,i21,de")
+entities2<-c(query2)%>%SearchEntities()%>%getEntities()
+release_tickers2<-c(map_chr(entities2,getName))
+
+
+release_tickers<-c(release_tickers1,release_tickers2)
+
+
+#entities<-c(query)%>%SearchEntities()%>%getEntities()
+# entities2<-c(query2)%>%SearchEntities()%>%getEntities()
+# release_tickers<-c(map_chr(entities1,getName),map_chr(entities2,getName))
+#release_tickers<-c(map_chr(entities,getName))
+
+y<-release_tickers%>%FetchTimeSeries()
+#getMetadata(y[[1]])
+#getConcepts(y[[3]])
+
+df<-y%>%map(as.xts)%>%do.call("cbind",.)%>%fortify.zoo(name="date")%>%as_tibble()%>%
+  pivot_longer(-date,names_to = "code",values_to = "producer_prices")%>%
+  mutate()
+
+m<-map(y,function(x)
+  {cbind(title=getTitle(x),
+      code=getMetadataValues(getMetadata(x),"PrimName"),
+      countrycode=getMetadataValues(getMetadata(x),"Region"))
+})
+
+m<-do.call("rbind",m)%>%as_tibble()
+
+data<-left_join(df,m,by="code")%>%
+  mutate(
+    sectorcode=sub("prcprr(.*)nsai21.*","\\1",code))%>%
+  filter(grepl("^[A-Za-z](\\d{2,4})?$", sectorcode))%>%
+  mutate(sector=sub("(.)(.*)","\\1",sectorcode),
+         subsector=sub("(.)(.*)","\\2",sectorcode),
+    level=case_when(nchar(subsector)==0~1,
+                    nchar(subsector)==2~2,
+                    nchar(subsector)==3~3,
+                    nchar(subsector)==4~4,
+                    TRUE~NA_real_),
+    subsector_name=sub("Germany, Eurostat, Producer Prices in Industry, Producer Prices, (.*), 2021=100, Index","\\1", title))
+
+data%>%select(countrycode,date,level,sector,nace2=subsector,subsector_name,producer_prices)
+}
+
+data_prices<-get_sts_prices()
+```
+
+```{r}
+get_sts_production<-function(){
+query1 <- CreateSearchQuery()
+setSearchText(query1, "sts_inpr_m,nsa,i21,de")
+entities1<-c(query1)%>%SearchEntities()%>%getEntities()
+release_tickers1<-c(map_chr(entities1,getName))
+
+query2 <- CreateSearchQuery()
+setSearchText(query2, "sts_sepr_m,nsa,i21,de")
+entities2<-c(query2)%>%SearchEntities()%>%getEntities()
+release_tickers2<-c(map_chr(entities2,getName))
+
+
+release_tickers<-c(release_tickers1,release_tickers2)
+
+
+#entities<-c(query)%>%SearchEntities()%>%getEntities()
+# entities2<-c(query2)%>%SearchEntities()%>%getEntities()
+# release_tickers<-c(map_chr(entities1,getName),map_chr(entities2,getName))
+#release_tickers<-c(map_chr(entities,getName))
+
+y<-release_tickers%>%FetchTimeSeries()
+#getMetadata(y[[1]])
+#getConcepts(y[[3]])
+
+df<-y%>%map(as.xts)%>%do.call("cbind",.)%>%fortify.zoo(name="date")%>%as_tibble()%>%
+  pivot_longer(-date,names_to = "code",values_to = "production_volume")%>%
+  mutate()
+
+m<-map(y,function(x)
+  {cbind(title=getTitle(x),
+      code=getMetadataValues(getMetadata(x),"PrimName"),
+      countrycode=getMetadataValues(getMetadata(x),"Region"))
+})
+
+m<-do.call("rbind",m)%>%as_tibble()
+
+data<-left_join(df,m,by="code")%>%
+  mutate(
+    sectorcode=sub("prd(.*)nsai21.*","\\1",code))%>%
+  filter(grepl("^[A-Za-z](\\d{2,4})?$", sectorcode))%>%
+  mutate(sector=sub("(.)(.*)","\\1",sectorcode),
+         subsector=sub("(.)(.*)","\\2",sectorcode),
+    level=case_when(nchar(subsector)==0~1,
+                    nchar(subsector)==2~2,
+                    nchar(subsector)==3~3,
+                    nchar(subsector)==4~4,
+                    TRUE~NA_real_),
+    subsector_name=sub("Germany, Eurostat, Producer Prices in Industry, Producer Prices, (.*), 2021=100, Index","\\1", title))
+
+data%>%select(date,sector,nace2=subsector,production_volume)
+}
+
+data_volume<-get_sts_production()
+```
+
+```{r}
+get_sts_importprices<-function(){
+query <- CreateSearchQuery()
+setSearchText(query, "sts_inpi_m;prc_imp,nsa,i21,de")
+entities<-c(query)%>%SearchEntities()%>%getEntities()
+release_tickers<-c(map_chr(entities,getName))
+
+
+y<-release_tickers%>%FetchTimeSeries()
+
+df<-y%>%map(as.xts)%>%do.call("cbind",.)%>%fortify.zoo(name="date")%>%as_tibble()%>%
+  pivot_longer(-date,names_to = "code",values_to = "import_prices")
+
+m<-map(y,function(x)
+  {cbind(title=getTitle(x),
+      code=getMetadataValues(getMetadata(x),"PrimName"),
+      countrycode=getMetadataValues(getMetadata(x),"Region"))
+})
+
+m<-do.call("rbind",m)%>%as_tibble()
+
+data<-left_join(df,m,by="code")%>%
+  mutate(
+    sectorcode=sub("(prcimpcpa|prcimpeucpa|prcimpneucpa)(.*)nsai21.*","\\2",code))%>%
+  filter(grepl("^[A-Za-z](\\d{2,4})?$", sectorcode))%>%
+  mutate(sector=sub("(.)(.*)","\\1",sectorcode),
+         subsector=sub("(.)(.*)","\\2",sectorcode),
+    level=case_when(nchar(subsector)==0~1,
+                    nchar(subsector)==2~2,
+                    nchar(subsector)==3~3,
+                    nchar(subsector)==4~4,
+                    TRUE~NA_real_),
+    import_region=case_when(grepl("prcimpcpa",code)~"Total",
+                            grepl("prcimpneucpa",code)~"Non-Euro Area",
+                            grepl("prcimpeucpa",code)~"Euro Area"),
+    subsector_name=sub("Germany, Eurostat, Import Prices in Industry, Import Prices(, Euro Area|, Non-Euro Area|), (.*), 2021=100, Index","\\2", title))
+
+data%>%select(date,sector,nace2=subsector,import_region,import_prices)%>%
+  pivot_wider(values_from = "import_prices",names_from = "import_region",names_prefix = "import_prices")
+}
+
+data_importprices<-get_sts_importprices()
+```
+
+## Destatis
+
+
+# Destatis
+## Searching
+```{r}
+data<-gen_table("61241-0004","genesis")
+cubes<-gen_objects2stat(code = "51000",database = "genesis", category = "cubes", detailed = T)
+
+
+search_results <- gen_find(term = "Dienstleistung",
+                           detailed = FALSE,
+                           ordering = TRUE,
+                           category = "all",
+                           database = "genesis",pagelength = 2500)
+                           
+search_results$Cubes
+```
+
+## Producer prices industry
+```{r}
+get_producerprices_destatis<-function(){
+data_2d<-gen_cube("61241BM002", database = "genesis")%>%  
+  mutate(nace2=sub("GP19-(.*)","\\1",GP19M2),
+         ym=paste0(as.character(JAHR),sub("MONAT(.*)","\\1",MONAT)),
+         date=ym(ym),
+         producerprices=PRE001_WERT)%>%
+  select(nace2,date,producerprices)
+
+data_3d<-gen_cube("61241BM003", database = "genesis")%>%  
+  mutate(nace2=sub("GP19-(.*)","\\1",GP19M3),
+         ym=paste0(as.character(JAHR),sub("MONAT(.*)","\\1",MONAT)),
+         date=ym(ym),
+         producerprices=PRE001_WERT)%>%
+  select(nace2,date,producerprices)
+
+data_4d<-gen_cube("61241BM004", database = "genesis")%>%  
+  mutate(
+    nace2=sub("GP19-(.*)","\\1",GP19M4),
+         level=4,
+         ym=paste0(as.character(JAHR),sub("MONAT(.*)","\\1",MONAT)),
+         date=ym(ym),
+         producerprices=PRE001_WERT)%>%
+  select(nace2,date,producerprices)
+
+rbind(data_2d,data_3d,data_4d)%>%
+  mutate(producerprices=ifelse(producerprices==0,NA_real_,producerprices))
+}
+```
+
+## Production industry
+```{r}
+# Note: WZ08 gleichbedeutend mit NACE2
+get_production_industry_destatis<-function(){
+data_2d<-gen_cube("42153BM002", database = "genesis")%>%
+  filter(WERT03=="WERTORG")%>%
+  mutate(nace2=sub("WZ08-(.*)","\\1",WZ08V2),
+         ym=paste0(as.character(JAHR),sub("MONAT(.*)","\\1",MONAT)),
+         date=ym(ym),
+         production=PRO101_WERT)%>%
+  select(nace2,date,production)
+
+data_3d<-gen_cube("42153BM003", database = "genesis")%>%
+  filter(WERT03=="WERTORG")%>%
+  mutate(nace2=sub("WZ08-(.*)","\\1",WZ08V3),
+         ym=paste0(as.character(JAHR),sub("MONAT(.*)","\\1",MONAT)),
+         date=ym(ym),
+         production=PRO101_WERT)%>%
+  select(nace2,date,production)
+
+data_4d<-gen_cube("42153BM004", database = "genesis")%>%
+  filter(WERT03=="WERTORG")%>%
+  mutate(nace2=sub("WZ08-(.*)","\\1",WZ08V4),
+         ym=paste0(as.character(JAHR),sub("MONAT(.*)","\\1",MONAT)),
+         date=ym(ym),
+         production=PRO101_WERT)%>%
+  select(nace2,date,production)
+
+rbind(data_2d,data_3d,data_4d)%>%
+  mutate(production=ifelse(production==0,NA_real_,production))
+}
+```
+
+## Producer prices Service
+
+```{r}
+get_producerprices_service_destatis<-function(){
+data<-gen_cube("61311BV002", database = "genesis")%>%
+#  filter(WZ08D6!="WZ08-501-01")%>% #getting rid of one composed thing
+  mutate(nace2=sub("WZ08-(.*)","\\1",WZ08D6),
+        # level=2,
+         ym=paste0(as.character(JAHR),as.character( as.numeric(sub("QUART(.*)","\\1",QUARTG))*3)),
+         date=ym(ym),
+         producerprices=PRE023_WERT)%>%
+  select(nace2,date,producerprices)
+
+data%>%
+  mutate(producerprices=ifelse(producerprices==0,NA_real_,producerprices))
+}
+```
+
+## Production Service
+47414BM004
+
+```{r}
+
+get_production_service_destatis<-function(){
+data<-gen_cube("47414BM004", database = "genesis")%>%
+  filter(WERT01=="WERTORG")%>%
+#  filter(WZ08D6!="WZ08-501-01")%>% #getting rid of one composed thing
+  mutate(nace2=sub("WZ08-(.*)","\\1",WZ08N8),
+        # level=2,
+         ym=paste0(as.character(JAHR),sub("MONAT(.*)","\\1",MONAT)),
+         date=ym(ym),
+         production=PRO102_WERT)%>%
+  select(nace2,date,production)
+
+data%>%
+  mutate(production=ifelse(production==0,NA_real_,production))
+}
+```
+
+
+## import prices
+```{r}
+get_importprices<-function(){
+data_2d<-gen_cube("61411BM002", database = "genesis")%>%  
+  mutate(nace2=sub("GP19-(.*)","\\1",GP19X2),
+         level=2,
+         ym=paste0(as.character(JAHR),sub("MONAT(.*)","\\1",MONAT)),
+         date=ym(ym),
+         importprices=PRE004_WERT)%>%
+  select(nace2,level,date,importprices)
+
+
+data_4d<-gen_cube("61411BM004", database = "genesis")%>%  
+  mutate(nace2=sub("GP19-(.*)","\\1",GP19X4),
+         level=4,
+         ym=paste0(as.character(JAHR),sub("MONAT(.*)","\\1",MONAT)),
+         date=ym(ym),
+         importprices=PRE004_WERT)%>%
+  select(nace2,level,date,importprices)
+
+rbind(data_2d,data_4d)%>%
+  mutate(importprices=ifelse(importprices==0,NA_real_,importprices))
+}
+```
+
+## Import Volume
+51000-0008
+```{r}
+get_importvolume_destatis<-function(){
+  
+data_import_2d<-map_df(2008:2024,function(x){
+gen_cube("51000BM221", database = "genesis",startyear=x,endyear=x,contents="GEWE")%>%  
+  mutate(nace2=sub("GP19-(.*)","\\1",GP19B2),
+         level=2,
+         countrycode=STLAH,
+         ym=paste0(as.character(JAHR),sub("MONAT(.*)","\\1",MONAT)),
+         date=ym(ym),
+         importvolume=GEWE_WERT)%>%
+  select(nace2,countrycode,level,date,importvolume)  
+})
+
+
+data_import_4d1<-map_df(2008:2014,function(x){
+gen_cube("51000BM241", database = "genesis",startyear=x,endyear=x,contents="GEWE")%>%  
+  mutate(nace2=sub("GP19-(.*)","\\1",GP19B4),
+         level=4,
+         countrycode=STLAH,
+         ym=paste0(as.character(JAHR),sub("MONAT(.*)","\\1",MONAT)),
+         date=ym(ym),
+         importvolume=GEWE_WERT)%>%
+  select(nace2,countrycode,level,date,importvolume)  
+})
+
+data_import_4d2<-map_df(2015:2024,function(x){
+gen_cube("51000BM241", database = "genesis",startyear=x,endyear=x,contents="GEWE")%>%  
+  mutate(nace2=sub("GP19-(.*)","\\1",GP19B4),
+         level=4,
+         countrycode=STLAH,
+         ym=paste0(as.character(JAHR),sub("MONAT(.*)","\\1",MONAT)),
+         date=ym(ym),
+         importvolume=GEWE_WERT)%>%
+  select(nace2,countrycode,level,date,importvolume)  
+})
+
+data_import<-rbind(data_import_2d,data_import_4d1,data_import_4d2)
+
+countrycodes<-readxl::read_excel("Data/code_countries_trade.xlsx")
+data_import2<-left_join(data_import,countrycodes,by="countrycode")
+
+return(data_import2)
+}
+
+gen_importvolume_agg<-function(data){
+  
+data%>%
+  select(nace2,date,country_group,importvolume)%>%
+  mutate(year=year(date))%>%# for scaling (mean 2021 = 100)
+  group_by(nace2,date,country_group)%>%
+  summarise(
+    import_sum=sum(importvolume,na.rm=T))%>% # importvolume
+  ungroup()%>%
+  # gen sum world
+  pivot_wider(names_from = country_group,values_from = import_sum)%>%
+  mutate(TOT=EU+ROW)%>%
+  pivot_longer(-c(nace2,date),names_to = "country_group",values_to = "import_sum")%>%
+  group_by(nace2,country_group)%>%
+  mutate(
+    import_avg_2021=mean(import_sum[year(date) == 2021], na.rm = TRUE),
+    import_avg_2021=case_when(import_avg_2021==0~NA_real_,
+                          TRUE~import_avg_2021))%>%
+  ungroup()%>%
+  mutate(import=100*import_sum/import_avg_2021)%>%
+  select(-c(import_sum,import_avg_2021))%>%
+  mutate(import=ifelse(import==0,NA_real_,import))%>%
+  pivot_wider(values_from = import,names_from = country_group,names_prefix = "import")
+
+
+}
+
+
+
+
+#normalize
+# data_import3<-data_import2%>%
+#   group_by(nace2,countrycode)%>%
+#   mutate(
+#     importprice_avg_2021=mean(importvolume[year(date) == 2021], na.rm = TRUE),
+#     importprice_avg_2021=case_when(importprice_avg_2021==0~NA_real_,
+#                            TRUE~importprice_avg_2021),
+#     importprice_normalized = 100*importvolume / importprice_avg_2021
+#   )%>%
+#   ungroup()%>%
+#   select(-importprice_avg_2021)
+```
+
+
+# Helper functions
+## Seasonal adjustment
+```{r}
+do_seasonadj<-function(x,date){
+      
+          vals <- x
+        dates <- date
+        
+        # Identify the indices of non-NA values
+        non_na_idx <- which(!is.na(vals))
+        
+        # need 2 or more non-NA
+         if (length(non_na_idx) < 2) {
+    return(vals) 
+  }
+        
+        # Determine the start and end of the non-NA segment
+        start_idx <- min(non_na_idx)
+        end_idx <- max(non_na_idx)
+        
+        # Extract the non-NA segment
+        vals_sub <- vals[start_idx:end_idx]
+        dates_sub <- dates[start_idx:end_idx]
+        
+     
+        ts_data <- ts(vals_sub, start = c(year(dates_sub[1]), month(dates_sub[1])), frequency = 12)
+        
+        # Try running x13; if it fails, return the original NA vector
+        sa_result <- tryCatch({
+      x13(ts_data)
+        }, error = function(e) {
+          return(NULL)
+        })
+        
+        if (is.null(sa_result)) {
+          # If x13 fails, return NAs
+          return(vals * NA)
+        } else {
+          # Extract the final seasonally adjusted series
+          sa_vals_sub <- sa_result$final$series[,2]
+        
+          res <- rep(NA_real_, length(vals))
+          res[start_idx:end_idx] <- sa_vals_sub
+          return(res)
+        }
+}
+```
+
+##Matching
+```{r}
+get_matching<-function(matching_base,p.indu,q.indu,p.serv,q.serv,pimp,qimp){
+  
+dates <-  seq(as.Date("1991-01-01"), floor_date(Sys.Date(), unit = "month"), by = "month") 
+expanded_dataset <- expand.grid(nace2 = matching_base$nace2, date = dates)
+  
+data<-expanded_dataset%>%
+  left_join(matching_base,by="nace2")%>%
+  #Production
+  left_join(q.indu,by=c("nace2","date"))%>%
+  left_join(q.serv,by=c("nace2","date"))%>%
+  mutate(production=case_when(!is.na(production.x)~production.x, # get production in one 
+                        !is.na(production.y)~production.y,
+                        TRUE~NA_real_))%>%
+  #Price
+  left_join(p.indu,by=c("nace2","date"))%>%
+  left_join(p.serv,by=c("nace2","date"))%>%
+  mutate(producerprices=case_when(!is.na(producerprices.x)~producerprices.x, #get prices in one
+                        !is.na(producerprices.y)~producerprices.y,
+                        TRUE~NA_real_))%>%
+  select(-c(production.x,production.y,producerprices.x,producerprices.y))%>%
+  # Imports
+  left_join(pimp%>%select(-level),by=c("nace2","date"))%>%
+  left_join(qimp,by=c("nace2","date"))  
+
+return(data)
+}
+```
+
+## Transformations (SA, Change etc.)
+```{r}
+gen_transformations<-function(data){
+ data%>%
+  group_by(nace2)%>%
+  arrange(date)%>%
+  mutate(
+    across(c(production,producerprices,importprices,importEU,importROW,importTOT),~do_seasonadj(.x,date),.names = "{.col}_sa"),
+    across(c(production,producerprices,importprices,importEU,importROW,importTOT),~round(100*(./lag(.,12)-1),1),.names = "{.col}_c12m"),
+    across(c(production,producerprices,importprices,importEU,importROW,importTOT),~round(100*(./lag(.,1)-1),1),.names = "{.col}_c1m"),
+    across(c(production_sa,producerprices_sa,importprices_sa,importEU_sa,importROW_sa,importTOT_sa),~round(100*(./lag(.,1)-1),1),.names = "{.col}_c1m"),
+    across(c(production_sa,producerprices_sa,importprices_sa,importEU_sa,importROW_sa,importTOT_sa),~round(100*((.+lag(.,1)+lag(.,2))/(lag(.,12)+lag(.,12+1)+lag(.,12+2))-1),1),.names = "{.col}_c12mr3"))%>%
+  rename(production_nsa=production,producerprices_nsa=producerprices,importprices_nsa=importprices,importEU_nsa=importEU,importROW_nsa=importROW)%>%
+  ungroup()%>%
+    pivot_longer(-c(nace2,date,cagegory,nace2_main_code,nace2_main_name,level,nace2_sub_name),names_pattern = "(.*)_(.*)",names_to = c("vars","transf"),values_to = "values")%>%
+    pivot_wider(names_from = "vars",values_from = "values")
+
+}
+```
+
+
+#Joining 
+```{r}
+
+matching_base<-readxl::read_excel("Data/list_nace_sectors.xlsx")%>%
+  filter(include)%>%
+  select(-c(Weber_name,Weber_weight,CPI_weight,PPI_weight,Comments,include))
+p.indu<-get_producerprices_destatis()
+q.indu<-get_production_industry_destatis()
+p.serv<-get_producerprices_service_destatis()
+q.serv<-get_production_service_destatis()
+#data_shortages<-get_ifo_manufacturing()
+pimp<-get_importprices()
+qimp_full<-get_importvolume_destatis()
+qimp<-gen_importvolume_agg(qimp_full)
+
+data<-get_matching(matching_base,p.indu,q.indu,p.serv,q.serv,pimp,qimp)
+data_transf<-gen_transformations(data)
+
+
+test_2%>%
+  filter(level==2)%>%
+  ggplot(aes(date))+
+  geom_line(aes(y=production_sa_c1m),color="red")+
+ # geom_line(aes(y=production),color="blue",alpha=0.5)+
+  facet_wrap(~nace2,nrow=5)
+
+test2<-test%>%
+  mutate(name=paste0(nace2_sub_name," (",nace2,")"))%>%
+  select(name,level, date,matches("c12m"))%>%
+  filter(date=="2024-10-01",level==2)%>%
+  select(-level)
+
+reactable(
+  test2,
+  # details = function(index) {
+  #   sales <- filter(data, Manufacturer == sales_by_mfr$Manufacturer[index]) %>% select(-Manufacturer)
+  #   tbl <- reactable(sales, outlined = TRUE, highlight = TRUE, fullWidth = FALSE)
+  #   htmltools::div(style = list(margin = "12px 45px"), tbl)
+  # },
+ # onClick = "expand",
+#rowStyle = list(cursor = "pointer"),
+  columns = list(
+  production_c12m = colDef(style = function(value) {
+    if (value > 0) {
+      color <- "green"
+    } else if (value < 0) {
+      color <- "red"
+    } else {
+      color <- "#777"
+    }
+    list(color = color, fontWeight = "bold")
+  })
+),
+pagination=F
+)
+
+```
+
+# Testing
+## Table
+
+```{r}
+# Basic usage
+reactable(iris)
+
+# Grouping and aggregation
+reactable(
+  iris,
+  groupBy = "Species",
+  columns = list(
+    Sepal.Length = colDef(aggregate = "count"),
+    Sepal.Width = colDef(aggregate = "mean"),
+    Petal.Length = colDef(aggregate = "sum"),
+    Petal.Width = colDef(aggregate = "max")
+  )
+)
+
+# Row details
+reactable(iris, details = function(index) {
+  htmltools::div(
+    "Details for row: ", index,
+    htmltools::tags$pre(paste(capture.output(iris[index, ]), collapse = "\n"))
+  )
+})
+
+# Conditional styling
+reactable(sleep, columns = list(
+  extra = colDef(style = function(value) {
+    if (value > 0) {
+      color <- "green"
+    } else if (value < 0) {
+      color <- "red"
+    } else {
+      color <- "#777"
+    }
+    list(color = color, fontWeight = "bold")
+  })
+))
+```
+
+
+```{r}
+
+data <- MASS::Cars93[18:47, ] %>%
+  mutate(ID = as.character(18:47), Date = seq(as.Date("2019-01-01"), by = "day", length.out = 30)) %>%
+  select(ID, Date, Manufacturer, Model, Type, Price)
+
+sales_by_mfr <- group_by(data, Manufacturer) %>%
+  summarize(Quantity = n(), Sales = sum(Price))
+
+table<-reactable(
+  sales_by_mfr,
+  details = function(index) {
+    sales <- filter(data, Manufacturer == sales_by_mfr$Manufacturer[index]) %>% select(-Manufacturer)
+    tbl <- reactable(sales, outlined = TRUE, highlight = TRUE, fullWidth = FALSE)
+    htmltools::div(style = list(margin = "12px 45px"), tbl)
+  },
+  onClick = "expand",
+  rowStyle = list(cursor = "pointer")
+)
+
+table
+
+saveWidget(widget = table, file="test_table.html",selfcontained = FALSE)
+```
+
+
+```{r}
+# Load required packages
+library(tidyverse)
+
+# Example dataset
+data <- tibble(
+  name = c("A", "A", "A", "B", "B", "C", "C", "C"),
+  date = as.Date(c("2024-01-01", "2024-01-02", "2024-01-03", "2024-01-01", "2024-01-02", "2024-01-01", "2024-01-02", "2024-01-03")),
+  var1 = c(10, 20, NA, 5, NA, 15, NA, 25),
+  var2 = c(NA, 30, 40, NA, 50, NA, 35, 45),
+  var3 = c(100, NA, 120, 105, NA, 110, 115, 125),
+  var4 = c(NA, 15, 20, 10, 25, NA, NA, 30),
+  var5 = c(1, 2, 3, NA, 5, 6, NA, 7)
+)
+
+# Process data
+result <- data %>%
+  pivot_longer(cols = starts_with("var"), names_to = "variable", values_to = "value") %>%
+  filter(!is.na(value)) %>%
+  group_by(name, variable) %>%
+  summarize(
+    last_value = last(value, order_by = date),
+    last_date = last(date, order_by = date),
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = variable,
+    values_from = c(last_value, last_date),
+    names_sep = "_"
+  )
+
+# View the result
+print(result)
+
+```
+
+
+```{r}
+ts<-FetchOneTimeSeries("depric4246")
+getMetadata(ts)
+```
+
+
+
+# Archiv
+
+```{r}
+get_prices_destatis_macrobond<-function(){
+  query <- CreateSearchQuery()
+addAttributeValueFilter(query,"Release","rel_desbdppi")
+entities<-c(query)%>%SearchEntities()%>%getEntities()
+release_tickers<-c(map_chr(entities,getName))
+
+y<-release_tickers%>%FetchTimeSeries()
+
+getMetadataValues(getMetadata(y[[1]]),"SBGermanCode")
+MacrobondAPI::getDescription(y[[1]])
+
+df<-y%>%map(as.xts)%>%do.call("cbind",.)%>%fortify.zoo(name="date")%>%as_tibble()%>%
+  pivot_longer(-date,names_to = "code",values_to = "import_prices")
+
+m<-map(y,function(x)
+  {cbind(title=getTitle(x),
+      code=getMetadataValues(getMetadata(x),"PrimName"),
+      countrycode=getMetadataValues(getMetadata(x),"Region"))
+})
+
+m<-do.call("rbind",m)%>%as_tibble()
+
+data<-left_join(df,m,by="code")#%>%
+  mutate(
+    sectorcode=sub("(prcimpcpa|prcimpeucpa|prcimpneucpa)(.*)nsai21.*","\\2",code))%>%
+  filter(grepl("^[A-Za-z](\\d{2,4})?$", sectorcode))%>%
+  mutate(sector=sub("(.)(.*)","\\1",sectorcode),
+         subsector=sub("(.)(.*)","\\2",sectorcode),
+    level=case_when(nchar(subsector)==0~1,
+                    nchar(subsector)==2~2,
+                    nchar(subsector)==3~3,
+                    nchar(subsector)==4~4,
+                    TRUE~NA_real_),
+    import_region=case_when(grepl("prcimpcpa",code)~"Total",
+                            grepl("prcimpneucpa",code)~"Non-Euro Area",
+                            grepl("prcimpeucpa",code)~"Euro Area"),
+    subsector_name=sub("Germany, Eurostat, Import Prices in Industry, Import Prices(, Euro Area|, Non-Euro Area|), (.*), 2021=100, Index","\\2", title))
+
+}
+```
+
+```{r}
+get_erzeugerpreise_destatis<-function(){
+
+#   url <- "https://www-genesis.destatis.de/genesisWS/rest/2020/find/find"
+# data <- list(
+#   username = "2e07f105847249eeb9bc9efa31c9124f",  # Replace with your username
+#   term = "Abfall",
+#   category = "all",
+#   pagelength = "20",
+#   language = "de"
+# )
+
+
+  
+  
+  
+  
+# Make the POST request
+url <- "https://www-genesis.destatis.de/genesisWS/rest/2020/helloworld/whoami"
+
+# Create the request
+response <- request(url)%>%
+  req_method("POST")
+
+# Print the response
+
+resp_body_raw(response)
+}
+```
+
+```{r}
+library(httr2)
+
+# Define your credentials
+#username <- "IHRE_KENNUNG"  # Replace with your actual username
+#password <- "IHR_PASSWORT"  # Replace with your actual password
+
+# Define the URL
+url <- "https://www-genesis.destatis.de/genesisWS/rest/2020/data/cube"
+
+# Create the request
+req <- request(url) %>%
+  req_method("POST") %>%
+  req_headers(
+    "username" = "2e07f105847249eeb9bc9efa31c9124f",
+ #   "password" = password,
+    "Content-Type" = "application/x-www-form-urlencoded"
+  ) %>%
+  req_body_form(
+    name= "12411BJ001",
+ "area"= "all",
+ "values"= "true",
+ "metadata"= "true",
+ "additionals"= "false",
+    language = "de"
+  )
+
+# Optional: View the prepared request (for debugging)
+# req_dry_run(req)
+
+# Perform the request
+resp <- req_perform(req)
+
+# Check the response status
+if (resp_status(resp) == 200) {
+  # Parse the response as JSON
+  content <- resp_body_json(resp)
+  print(content)
+} else {
+  warning("Request failed with status code: ", resp_status(resp))
+  # Optionally, print the response body for more details
+  error_content <- resp_body_string(resp)
+  print(error_content)
+}
+
+
+data<-read_delim(content)
+```

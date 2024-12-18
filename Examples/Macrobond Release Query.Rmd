@@ -1,0 +1,97 @@
+---
+title: "Ifo Release Level Query"
+author: "Artur Kulinski"
+date: "2024-10-07"
+output: html_document
+---
+
+```{r File clearing, include=FALSE}
+
+rm(list=ls())
+options(scipen=999)
+
+library(MacrobondAPI)
+library(echarts4r)
+library(htmltools)
+library(htmlwidgets)
+library(reactable)
+library(echarts4r)
+library(tidyverse)
+```
+
+
+```{r Look for a release code}
+
+getMetadata(FetchOneTimeSeries(""))
+
+
+getMetadata(FetchOneTimeSeries("deifo0006"))
+```
+
+
+```{r Entity Search via release}
+
+#Create a Query
+#query1 <- CreateSearchQuery()
+#setEntityTypeFilter(Query_Release, "TimeSeries")
+#addAttributeValueFilter(Query_Release, "Release", "rel_deifodr")
+
+query <- CreateSearchQuery()
+setSearchText(query, "ifo by sector shortage of material & maj &bdu")
+
+
+query <- CreateSearchQuery()
+setSearchText(query, "ifo Construction shortage material & man &bdu")
+
+
+tickers <- getEntities(SearchEntities(query))
+
+#create empty vector
+release_tickers<-NULL
+
+#get list of series' codes
+for (i in tickers){
+  release_tickers<-append(release_tickers, getName(i))
+}
+
+release_tickers
+
+
+
+#release_tickers_filtered<-release_tickers [grepl("deifo_(.*)_(maj)_(.*)",release_tickers)]
+
+```
+
+
+```{r Entity Search via release}
+z<-as.vector(release_tickers)
+y<- FetchTimeSeries(z)
+
+getMetadata(y[[2]])
+
+
+df<-map(y,as.xts)%>%do.call("cbind",.)%>%fortify.zoo(name="Date")%>%as_tibble()%>%
+  pivot_longer(-Date,names_to = "sector",values_to = "values")
+
+
+m<-map(y,function(x)
+  {cbind(Title=getTitle(x),
+      sector=getMetadataValues(getMetadata(x),"PrimName"),
+      countrycode=getMetadataValues(getMetadata(x),"Region"))
+})
+
+m<-do.call("rbind",m)%>%as_tibble()
+
+data<-left_join(df,m,by="sector")%>%
+  mutate(sectorcode=sector,
+    sector=sub("deifo_(.).*", "\\1", sectorcode),
+    NACE2=sub(".*deifo_.(\\d{3}).*", "\\1", sectorcode))
+```
+
+```{r}
+library(echarts4r)
+
+```
+
+
+
