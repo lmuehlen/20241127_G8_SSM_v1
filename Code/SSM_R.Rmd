@@ -17,13 +17,12 @@ library(devtools)
 library(httr2)
 library(readxl)
 library(RJDemetra) #for seasonal adjustment
-usethis::use_github()
+#usethis::use_github()
 #restatis:::gen_api()
 #restatis::gen_table("61111-0001","genesis")
 #install.packages("httr2")
 #gen_auth_save("genesis")
 #usethis::edit_r_environ()
-
 ```
 
 
@@ -471,28 +470,31 @@ data%>%
 ```{r}
 do_seasonadj<-function(x,date){
       
+  
+  
           vals <- x
         dates <- date
         
         # Identify the indices of non-NA values
         non_na_idx <- which(!is.na(vals))
-        
+      
         # need 2 or more non-NA
          if (length(non_na_idx) < 2) {
-    return(vals) 
+    return(vals*NA) 
   }
-        
-        # Determine the start and end of the non-NA segment
-        start_idx <- min(non_na_idx)
-        end_idx <- max(non_na_idx)
-        
+
         # Extract the non-NA segment
-        vals_sub <- vals[start_idx:end_idx]
-        dates_sub <- dates[start_idx:end_idx]
+        vals_sub <- vals[non_na_idx]
+        dates_sub <- dates[non_na_idx]
         
-     
+     if(mean(diff(non_na_idx))-1<1e-6){
         ts_data <- ts(vals_sub, start = c(year(dates_sub[1]), month(dates_sub[1])), frequency = 12)
-        
+     }else if(mean(diff(non_na_idx))-3<1e-6){
+       ts_data <- ts(vals_sub, start = c(year(dates_sub[1]), month(dates_sub[1])), frequency = 4)
+     }else{
+       return(vals*NA)
+     }
+      
         # Try running x13; if it fails, return the original NA vector
         sa_result <- tryCatch({
       x13(ts_data)
@@ -508,10 +510,11 @@ do_seasonadj<-function(x,date){
           sa_vals_sub <- sa_result$final$series[,2]
         
           res <- rep(NA_real_, length(vals))
-          res[start_idx:end_idx] <- sa_vals_sub
+          res[non_na_idx] <- sa_vals_sub
           return(res)
-        }
+        } 
 }
+
 ```
 
 ##Matching
